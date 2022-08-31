@@ -93,7 +93,7 @@ class CT_Head(nn.Module):
         img_size = img_meta['img_size'][0]
 
         label_num = np.max(label) + 1
-        label = cv2.resize(label, (img_size[1], img_size[0]), interpolation=cv2.INTER_NEAREST)
+        label = cv2.resize(label, (int(np.float32(img_size[1])), int(np.float32(img_size[0]))), interpolation=cv2.INTER_NEAREST)
 
         if not self.training and cfg.report_speed:
             torch.cuda.synchronize()
@@ -106,6 +106,7 @@ class CT_Head(nn.Module):
 
         bboxes = []
         scores = []
+        allContoures = []
         for i in range(1, label_num):
             ind = (label == i)
             points = np.array(np.where(ind)).transpose((1, 0))
@@ -126,9 +127,13 @@ class CT_Head(nn.Module):
                 binary = np.zeros(label.shape, dtype='uint8')
                 binary[ind] = 1
                 try:
-                	_, contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                  # print('hello')
+                  _, contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                 except BaseException:
-                	contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                  # print('hello_1')
+                  contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                  # print(len(contours))
+                  allContoures.append(contours)
                 # contour = contours[0]
                 # epsilon = 0.01 * cv2.arcLength(contour, True)
                 # approx = cv2.approxPolyDP(contour, epsilon, True)
@@ -139,15 +144,62 @@ class CT_Head(nn.Module):
             bboxes.append(bbox.reshape(-1))
             scores.append(score_i)
 
+        # print(allContoures)
+
         outputs.update(dict(
             bboxes=bboxes,
             scores=scores
         ))
 
+        img = img_meta['imgs'].numpy()[0]
+
+        # print(len(bboxes))
+        # print(bboxes)
+
+        # lines = []
+        # for i, bbox in enumerate(bboxes):
+        #     bbox = bbox.reshape(-1, 2)[:, ::-1].reshape(-1)
+        #     values = [int(v) for v in bbox]
+        #     line = "%d" % values[0]
+        #     for v_id in range(1, len(values)):
+        #         line += ",%d" % values[v_id]
+        #     lines.append(line)
+        # print(lines)
+
+
+        print(img_meta['img_name'])
+        for contour in allContoures:
+          # print(contour[0])
+          # print(list(contour))
+          # print(contour[0])
+          # crop = self.crop_img_by_polygon(img, contour[0])
+          pts = np.array(contour[0])
+          rect = cv2.boundingRect(pts)
+          x, y, w, h = rect
+          cv2.rectangle(img, (x, y), (x + w, y + h), 122, 2)
+          # croped = img[y : y + h, x : x + w].copy()
+          # pts = pts - pts.min(axis=0)
+          # mask = np.zeros(croped.shape[:2], np.uint8)
+          # cv2.drawContours(img, [pts], -1, (255, 255, 255), -1, cv2.LINE_AA)
+        cv2.imwrite('result' + str(img_meta['img_name'][0]) + '.jpg', img)
+
+
         # self.vis(img_meta, score.copy(), kernel.copy(), label_kernel.copy(), label.copy(), outputs, loc.copy())
         # embed()
 
         return outputs
+
+    def crop_img_by_polygon(self, img, polygon):
+      # https://stackoverflow.com/questions/48301186/cropping-concave-polygon-from-image-using-opencv-python
+      pts = np.array(polygon)
+      rect = cv2.boundingRect(pts)
+      x, y, w, h = rect
+      croped = img[y : y + h, x : x + w].copy()
+      pts = pts - pts.min(axis=0)
+      mask = np.zeros(croped.shape[:2], np.uint8)
+      cv2.drawContours(mask, [pts], -1, (255, 255, 255), -1, cv2.LINE_AA)
+      dst = cv2.bitwise_and(croped, croped, mask=mask)
+      return dst
 
     def vis(self, img_meta, score, kernel, label_kernel, label, outputs, loc):
         color_list = []
